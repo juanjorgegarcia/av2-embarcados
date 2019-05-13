@@ -119,10 +119,11 @@ typedef struct {
 } touchData;
 
 
-///** The conversion data is done flag */
-//volatile bool g_is_conversion_done = false;
-//SemaphoreHandle_t xSemaphore;
-//
+/** Semaforo a ser usado pela task led */
+SemaphoreHandle_t xSemaphore2;
+SemaphoreHandle_t xSemaphore3;
+
+
 ///** The conversion data value */
 //volatile uint32_t g_ul_value = 0;
 
@@ -149,22 +150,25 @@ QueueHandle_t xQueueDuty;
 /** PWM channel instance for LEDs */
 pwm_channel_t g_pwm_channel_led;
 
+volatile uint16_t duty = 0;
 #define BUT1_PIO_ID			  ID_PIOD
 #define BUT1_PIO				  PIOD
-#define BUT1_PIN				  28
+#define BUT1_PIN				  28u
 #define BUT1_PIN_MASK			  (1 << BUT1_PIN)
 #define BUT1_DEBOUNCING_VALUE  79
 
 #define BUT2_PIO_ID			  ID_PIOC
 #define BUT2_PIO				  PIOC
-#define BUT2_PIN					31
-#define BUT2_PIN_MASK			  (1 << BUT1_PIN)
+#define BUT2_PIN					31u
+#define BUT2_PIN_MASK			  (1 << BUT2_PIN)
 #define BUT2_DEBOUNCING_VALUE  79
+
+
 
 #define BUT3_PIO_ID			  ID_PIOA
 #define BUT3_PIO				  PIOA
-#define BUT3_PIN					19
-#define BUT3_PIN_MASK			  (1 << BUT1_PIN)
+#define BUT3_PIN					19u
+#define BUT3_PIN_MASK			  (1 << BUT3_PIN)
 #define BUT3_DEBOUNCING_VALUE  79
 
 
@@ -327,6 +331,8 @@ static void mxt_init(struct mxt_device *device)
 			+ MXT_GEN_COMMANDPROCESSOR_CALIBRATE, 0x01);
 }
 
+
+
 /************************************************************************/
 /* funcoes                                                              */
 /************************************************************************/
@@ -352,7 +358,7 @@ void draw_screen(void) {
 	
 	font_draw_text(&digital52, "15C", termometro.width+20, ILI9488_LCD_HEIGHT - termometro.height , 1);
 	ili9488_draw_pixmap(0, ILI9488_LCD_HEIGHT - termometro.height, termometro.width , termometro.height, termometro.data);
-	font_draw_text(&digital52, "100%",ar.width+20, ILI9488_LCD_HEIGHT - ar.height - termometro.height , 1);
+	font_draw_text(&digital52, "0%",ar.width+20, ILI9488_LCD_HEIGHT - ar.height - termometro.height , 1);
 
 
 
@@ -361,6 +367,13 @@ void draw_temp(int32_t temp) {
 	char temp_buffer [512];
 	sprintf(temp_buffer, "%d",temp);
 	font_draw_text(&digital52, temp_buffer, termometro.width+20, ILI9488_LCD_HEIGHT - termometro.height , 1);
+
+}
+
+void draw_duty(int32_t duty) {
+	char duty_buffer [512];
+	sprintf(duty_buffer, "%02d %",duty);
+	font_draw_text(&digital52, duty_buffer,ar.width+20, ILI9488_LCD_HEIGHT - ar.height - termometro.height , 1);
 
 }
  
@@ -577,6 +590,7 @@ void task_mxt(void){
 void task_lcd(void){
   xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
    xQueueTemp = xQueueCreate( 10, sizeof( int32_t ) );
+	xQueueDuty = xQueueCreate( 10, sizeof( int32_t ) );
 
 	configure_lcd();
   
@@ -586,6 +600,7 @@ void task_lcd(void){
 
   touchData touch;
 	int32_t temp;
+	int32_t duty;
 
   while (true) {  
      if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
@@ -596,7 +611,14 @@ void task_lcd(void){
 		//update_screen(touch.x, touch.y);
 		draw_temp(temp);
 		printf("\ntemp recebida: %d", temp);
-	 } 
+	 }
+	 
+	if (xQueueReceive( xQueueDuty, &(duty), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
+		draw_duty(duty);
+		printf("\nDuty recebido: %d", duty);
+
+	}
+
   }	 
 }
 
@@ -632,8 +654,8 @@ void task_adc(void){
 	}
 }
 void task_pwm(void){
-	xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
-	xQueueTemp = xQueueCreate( 10, sizeof( int32_t ) );
+	xQueueDuty = xQueueCreate( 10, sizeof( int32_t ) );
+
 		
 	int32_t temp;
 	  /* Configura pino para ser controlado pelo PWM */
@@ -641,23 +663,128 @@ void task_pwm(void){
 	  pio_set_peripheral(PIO_PWM_0, PIO_PERIPH_A, MASK_PIN_PWM_0 );
 	  
 	  /* inicializa PWM com dutycicle 0*/
-	  uint duty = 0;
 	  PWM0_init(0, duty);
 
-
+	int32_t dutyVal;
 	while (true) {
 		/* fade in */
+		if (xQueueReceive( xQueueDuty, &(dutyVal), ( TickType_t )  4500 / portTICK_PERIOD_MS)) {
+			printf("\nduty: %d",dutyVal);
+			for(duty = 0; duty <= dutyVal; duty++){
+				pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
+				delay_ms(10);
+			}
+			/* fade out*/
+			for(duty = 0; duty <= dutyVal; duty++){
+				pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
+				delay_ms(10);
+			}
+		}
+		vTaskDelay(1000/portTICK_PERIOD_MS);
+		}
+}
+void butCallback2(void) {
 
-		for(duty = 0; duty <= 100; duty++){
-			pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
-			delay_ms(10);
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	printf("but_callback \n");
+	xSemaphoreGiveFromISR(xSemaphore2, &xHigherPriorityTaskWoken);
+	
+	printf("semafaro tx \n");
+
+  /*
+  else{
+    BaseType_t xHigherPriorityTaskWoken = pdTRUE;
+    xSemaphoreGiveFromISR(xSemaphore, &xHigherPriorityTaskWoken);
+  }
+  */
+}
+void butCallback3(void) {
+	
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	printf("but_callback \n");
+	xSemaphoreGiveFromISR(xSemaphore3, &xHigherPriorityTaskWoken);
+	printf("semafaro tx \n");
+  /*
+  else{
+    BaseType_t xHigherPriorityTaskWoken = pdTRUE;
+    xSemaphoreGiveFromISR(xSemaphore, &xHigherPriorityTaskWoken);
+  }
+  */
+}
+void io_init(void) {
+
+	// Configura led
+	pmc_enable_periph_clk(BUT2_PIO_ID);
+	pio_configure(BUT2_PIO, PIO_INPUT, BUT2_PIN_MASK,PIO_PULLUP | PIO_DEBOUNCE);
+
+
+	pmc_enable_periph_clk(BUT3_PIO_ID);
+	pio_configure(BUT3_PIO, PIO_INPUT, BUT3_PIN_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+
+	// Configura interrup??o no pino referente ao botao e associa
+	// fun??o de callback caso uma interrup??o for gerada
+	// a fun??o de callback ? a: but_callback()
+	pio_handler_set(BUT2_PIO,
+	BUT2_PIO_ID,
+	BUT2_PIN_MASK,
+	PIO_IT_FALL_EDGE,
+	butCallback3);
+
+	pio_handler_set(BUT3_PIO,
+	BUT3_PIO_ID,
+	BUT3_PIN_MASK,
+	PIO_IT_FALL_EDGE,
+	butCallback2);
+	// Ativa interrup??o
+	pio_enable_interrupt(BUT2_PIO, BUT2_PIN_MASK);
+
+	// Configura NVIC para receber interrupcoes do PIO do botao
+	// com prioridade 4 (quanto mais pr?ximo de 0 maior)
+	NVIC_EnableIRQ(BUT2_PIO_ID);
+	NVIC_SetPriority(BUT2_PIO_ID, 4); // Prioridade 
+	
+	pio_enable_interrupt(BUT3_PIO, BUT3_PIN_MASK);
+
+	// Configura NVIC para receber interrupcoes do PIO do botao
+	// com prioridade 4 (quanto mais pr?ximo de 0 maior)
+	NVIC_EnableIRQ(BUT3_PIO_ID);
+	NVIC_SetPriority(BUT3_PIO_ID, 4); // Prioridade 4
+}
+/**
+ * \brief This task, when activated, make LED blink at a fixed rate
+ */
+static void task_buts(void *pvParameters)
+{
+        /* We are using the semaphore for synchronisation so we create a binary
+        semaphore rather than a mutex.  We must make sure that the interrupt
+        does not attempt to use the semaphore before it is created! */
+	xSemaphore2 = xSemaphoreCreateBinary();
+	xSemaphore3 = xSemaphoreCreateBinary();
+
+	uint32_t duty = 0;
+        /* devemos iniciar a interrupcao no pino somente apos termos alocado
+           os recursos (no caso semaforo), nessa funcao inicializamos 
+           o botao e seu callback*/
+    io_init();
+
+	if (xSemaphore2 == NULL)
+		printf("falha em criar o semaforo2 \n");
+	if (xSemaphore3 == NULL)
+		printf("falha em criar o semaforo3 \n");
+
+	for (;;) {
+		if( xSemaphoreTake(xSemaphore2, ( TickType_t ) 500) == pdTRUE ){
+			duty++;
+			xQueueSend( xQueueDuty, &duty, 0);
+			printf("\nincrementando duty: %d",duty);
 		}
-		/* fade out*/
-		for(duty = 0; duty <= 100; duty++){
-			pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
-			delay_ms(10);
+		if( xSemaphoreTake(xSemaphore3, ( TickType_t ) 500) == pdTRUE ){
+			duty--;
+			xQueueSend( xQueueDuty, &duty, 0);
+			printf("\ndecrementando duty: %d",duty);
 		}
-		}
+		
+	}
 }
 
 /************************************************************************/
@@ -697,6 +824,11 @@ int main(void)
 	/* Create task to handler LCD */
 	if (xTaskCreate(task_pwm, "pwm", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
 		printf("Failed to create test adc task\r\n");
+	}
+	
+		/* Create task to handler LCD */
+	if (xTaskCreate(task_buts, "buttons", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
+			printf("Failed to create test adc task\r\n");
 	}
 	
 
