@@ -131,7 +131,27 @@ volatile uint32_t g_ul_value = 0;
 QueueHandle_t xQueueTouch;
 QueueHandle_t xQueueTemp;
 QueueHandle_t xQueueAnalog;
+QueueHandle_t xQueueDuty;
 
+
+
+#define PIO_PWM_0 PIOA
+#define ID_PIO_PWM_0 ID_PIOA
+#define MASK_PIN_PWM_0 (1 << 0) 
+
+/** PWM frequency in Hz */
+#define PWM_FREQUENCY      1000
+/** Period value of PWM output waveform */
+#define PERIOD_VALUE       100
+/** Initial duty cycle value */
+#define INIT_DUTY_VALUE    0
+
+/** PWM channel instance for LEDs */
+pwm_channel_t g_pwm_channel_led;
+
+/**
+ *  \brief Configure the Console UART.
+ */
 /*************************************************s
 
 /************************************************************************/
@@ -400,6 +420,39 @@ void mxt_handler(struct mxt_device *device, uint *x, uint *y)
 	} while ((mxt_is_message_pending(device)) & (i < MAX_ENTRIES));
 }
 
+void PWM0_init(uint channel, uint duty){
+	/* Enable PWM peripheral clock */
+	pmc_enable_periph_clk(ID_PWM0);
+
+	/* Disable PWM channels for LEDs */
+	pwm_channel_disable(PWM0, PIN_PWM_LED0_CHANNEL);
+
+	/* Set PWM clock A as PWM_FREQUENCY*PERIOD_VALUE (clock B is not used) */
+	pwm_clock_t clock_setting = {
+		.ul_clka = PWM_FREQUENCY * PERIOD_VALUE,
+		.ul_clkb = 0,
+		.ul_mck = sysclk_get_peripheral_hz()
+	};
+	
+	pwm_init(PWM0, &clock_setting);
+
+	/* Initialize PWM channel for LED0 */
+	/* Period is left-aligned */
+	g_pwm_channel_led.alignment = PWM_ALIGN_CENTER;
+	/* Output waveform starts at a low level */
+	g_pwm_channel_led.polarity = PWM_HIGH;
+	/* Use PWM clock A as source clock */
+	g_pwm_channel_led.ul_prescaler = PWM_CMR_CPRE_CLKA;
+	/* Period value of output waveform */
+	g_pwm_channel_led.ul_period = PERIOD_VALUE;
+	/* Duty cycle value of output waveform */
+	g_pwm_channel_led.ul_duty = duty;
+	g_pwm_channel_led.channel = channel;
+	pwm_channel_init(PWM0, &g_pwm_channel_led);
+	
+	/* Enable PWM channels for LEDs */
+	pwm_channel_enable(PWM0, channel);
+}
 /**
  * \brief AFEC interrupt callback function.
  */
@@ -559,7 +612,34 @@ void task_adc(void){
 
 	}
 }
+void task_pwm(void){
+	xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
+	xQueueTemp = xQueueCreate( 10, sizeof( int32_t ) );
+		
+	int32_t temp;
+	  /* Configura pino para ser controlado pelo PWM */
+	  pmc_enable_periph_clk(ID_PIO_PWM_0);
+	  pio_set_peripheral(PIO_PWM_0, PIO_PERIPH_A, MASK_PIN_PWM_0 );
+	  
+	  /* inicializa PWM com dutycicle 0*/
+	  uint duty = 0;
+	  PWM0_init(0, duty);
 
+
+	while (true) {
+		/* fade in */
+
+		for(duty = 0; duty <= 100; duty++){
+			pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
+			delay_ms(10);
+		}
+		/* fade out*/
+		for(duty = 0; duty <= 100; duty++){
+			pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
+			delay_ms(10);
+		}
+		}
+}
 
 /************************************************************************/
 /* main                                                                 */
@@ -595,6 +675,11 @@ int main(void)
    if (xTaskCreate(task_adc, "adc", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
 	    printf("Failed to create test adc task\r\n");
     }
+	/* Create task to handler LCD */
+	if (xTaskCreate(task_pwm, "pwm", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
+		printf("Failed to create test adc task\r\n");
+	}
+	
 
   /* Start the scheduler. */
   vTaskStartScheduler();
