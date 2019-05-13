@@ -119,12 +119,12 @@ typedef struct {
 } touchData;
 
 
-/** The conversion data is done flag */
-volatile bool g_is_conversion_done = false;
-SemaphoreHandle_t xSemaphore;
-
-/** The conversion data value */
-volatile uint32_t g_ul_value = 0;
+///** The conversion data is done flag */
+//volatile bool g_is_conversion_done = false;
+//SemaphoreHandle_t xSemaphore;
+//
+///** The conversion data value */
+//volatile uint32_t g_ul_value = 0;
 
 /* Canal do sensor de temperatura */
 #define AFEC_CHANNEL_TEMP_SENSOR 0
@@ -148,6 +148,25 @@ QueueHandle_t xQueueDuty;
 
 /** PWM channel instance for LEDs */
 pwm_channel_t g_pwm_channel_led;
+
+#define BUT1_PIO_ID			  ID_PIOD
+#define BUT1_PIO				  PIOD
+#define BUT1_PIN				  28
+#define BUT1_PIN_MASK			  (1 << BUT1_PIN)
+#define BUT1_DEBOUNCING_VALUE  79
+
+#define BUT2_PIO_ID			  ID_PIOC
+#define BUT2_PIO				  PIOC
+#define BUT2_PIN					31
+#define BUT2_PIN_MASK			  (1 << BUT1_PIN)
+#define BUT2_DEBOUNCING_VALUE  79
+
+#define BUT3_PIO_ID			  ID_PIOA
+#define BUT3_PIO				  PIOA
+#define BUT3_PIN					19
+#define BUT3_PIN_MASK			  (1 << BUT1_PIN)
+#define BUT3_DEBOUNCING_VALUE  79
+
 
 /**
  *  \brief Configure the Console UART.
@@ -458,12 +477,12 @@ void PWM0_init(uint channel, uint duty){
  */
 static void AFEC_Temp_callback(void)
 {
-	//int32_t adcVal;
-	//adcVal = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
-	//xQueueSendFromISR( xQueueAnalog, &adcVal, 0);
-	
-	g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
-	g_is_conversion_done = true;
+	int32_t adcVal;
+	adcVal = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
+	xQueueSendFromISR( xQueueAnalog, &adcVal, 0);
+	//
+	//g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
+	//g_is_conversion_done = true;
 	printf("converteu");
 }
 
@@ -509,7 +528,7 @@ static void config_ADC_TEMP(void){
 	afec_set_trigger(AFEC0, AFEC_TRIG_SW);
 
 	/* configura call back */
-	afec_set_callback(AFEC0, AFEC_INTERRUPT_EOC_0,	AFEC_Temp_callback, 1);
+	afec_set_callback(AFEC0, AFEC_INTERRUPT_EOC_0,	AFEC_Temp_callback, 5);
 
 	/*** Configuracao espec?fica do canal AFEC ***/
 	struct afec_ch_config afec_ch_cfg;
@@ -593,22 +612,22 @@ void task_adc(void){
 
 	while (true) {
 		
-		if(g_is_conversion_done == true) {
-			g_is_conversion_done = false;
-
-			tempVal = convert_adc_to_temp(g_ul_value);
-			printf("Temp : %d \r\n", tempVal);
-			afec_start_software_conversion(AFEC0);
-			xQueueSend( xQueueTemp, &tempVal, 0);
-		}
-		//if (xQueueReceive( xQueueAnalog, &(adcVal), ( TickType_t )  4500 / portTICK_PERIOD_MS)) {
-			//tempVal = convert_adc_to_temp(adcVal);
+		//if(g_is_conversion_done == true) {
+			//g_is_conversion_done = false;
+//
+			//tempVal = convert_adc_to_temp(g_ul_value);
 			//printf("Temp : %d \r\n", tempVal);
 			//afec_start_software_conversion(AFEC0);
 			//xQueueSend( xQueueTemp, &tempVal, 0);
 		//}
+		if (xQueueReceive( xQueueAnalog, &(adcVal), ( TickType_t )  4500 / portTICK_PERIOD_MS)) {
+			tempVal = convert_adc_to_temp(adcVal);
+			printf("Temp : %d \r\n", tempVal);
+			afec_start_software_conversion(AFEC0);
+			xQueueSend( xQueueTemp, &tempVal, 0);
+		}
 
-		vTaskDelay(1000/portTICK_PERIOD_MS);
+		vTaskDelay(4000/portTICK_PERIOD_MS);
 
 	}
 }
