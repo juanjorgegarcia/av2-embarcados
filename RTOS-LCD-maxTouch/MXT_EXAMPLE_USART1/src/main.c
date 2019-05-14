@@ -132,7 +132,7 @@ SemaphoreHandle_t xSemaphore3;
 QueueHandle_t xQueueTouch;
 QueueHandle_t xQueueTemp;
 QueueHandle_t xQueueAnalog;
-QueueHandle_t xQueueDuty;
+QueueHandle_t xQueueDesiredTemp;
 QueueHandle_t xQueuePot;
 
 
@@ -600,7 +600,7 @@ void task_mxt(void){
 void task_lcd(void){
   xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
    xQueueTemp = xQueueCreate( 10, sizeof( int32_t ) );
-	xQueueDuty = xQueueCreate( 10, sizeof( int32_t ) );
+	xQueueDesiredTemp = xQueueCreate( 10, sizeof( int32_t ) );
 
 	configure_lcd();
   
@@ -610,7 +610,7 @@ void task_lcd(void){
 
 	touchData touch;
 	int32_t temp = 25;
-	int32_t duty = 25;
+	int32_t desiredTemp = 25;
 	int32_t pot = 0;
   while (true) {  
      if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
@@ -621,20 +621,22 @@ void task_lcd(void){
 		//update_screen(touch.x, touch.y);
 		draw_temp(temp);
 		printf("\ntemp recebida: %d", temp);
+		pot = (desiredTemp < temp) ? (((temp - desiredTemp)*100)/(100-desiredTemp)) : 0;
+
 		draw_duty(pot);
 	 }
 	 
-	if (xQueueReceive( xQueueDuty, &(duty), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
-		draw_desired_temp(duty);
+	if (xQueueReceive( xQueueDesiredTemp, &(desiredTemp), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
+		draw_desired_temp(desiredTemp);
 
 
-		pot = (duty < temp) ? (((temp - duty)*100)/(100-duty)) : 0;
+		pot = (desiredTemp < temp) ? (((temp - desiredTemp)*100)/(100-desiredTemp)) : 0;
 		
 		xQueueSend( xQueuePot, &pot, 0);
 		draw_duty(pot);
 
 
-		printf("\nDuty recebido: %d", duty);
+		printf("\nDuty recebido: %d", desiredTemp);
 
 	}
 	//vTaskDelay(100/portTICK_PERIOD_MS);
@@ -673,7 +675,6 @@ void task_adc(void){
 	}
 }
 void task_pwm(void){
-	xQueueDuty = xQueueCreate( 10, sizeof( int32_t ) );
 	xQueuePot = xQueueCreate( 10, sizeof( int32_t ) );
 
 		
@@ -791,7 +792,7 @@ static void task_buts(void *pvParameters)
 				duty++;
 			}
 			
-			xQueueSend( xQueueDuty, &duty, 0);
+			xQueueSend( xQueueDesiredTemp, &duty, 0);
 			printf("\nincrementando duty: %d",duty);
 		}
 		if( xSemaphoreTake(xSemaphore3, ( TickType_t ) 500) == pdTRUE ){
@@ -799,7 +800,7 @@ static void task_buts(void *pvParameters)
 				duty--;
 
 			}
-			xQueueSend( xQueueDuty, &duty, 0);
+			xQueueSend( xQueueDesiredTemp, &duty, 0);
 			printf("\ndecrementando duty: %d",duty);
 		}
 		
