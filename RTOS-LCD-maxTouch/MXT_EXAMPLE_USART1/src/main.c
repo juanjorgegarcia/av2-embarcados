@@ -133,6 +133,7 @@ QueueHandle_t xQueueTouch;
 QueueHandle_t xQueueTemp;
 QueueHandle_t xQueueAnalog;
 QueueHandle_t xQueueDuty;
+QueueHandle_t xQueuePot;
 
 
 
@@ -356,24 +357,33 @@ void draw_screen(void) {
 	ili9488_draw_pixmap(ILI9488_LCD_WIDTH - soneca.width, 0, soneca.width , soneca.height, soneca.data);
 	ili9488_draw_pixmap(0, ILI9488_LCD_HEIGHT - ar.height - termometro.height, ar.width , ar.height, ar.data);
 	
-	font_draw_text(&digital52, "15C", termometro.width+20, ILI9488_LCD_HEIGHT - termometro.height , 1);
+	font_draw_text(&digital52, "20C", termometro.width+20, ILI9488_LCD_HEIGHT - termometro.height , 1);
 	ili9488_draw_pixmap(0, ILI9488_LCD_HEIGHT - termometro.height, termometro.width , termometro.height, termometro.data);
-	font_draw_text(&digital52, "0%",ar.width+20, ILI9488_LCD_HEIGHT - ar.height - termometro.height , 1);
+	font_draw_text(&digital52, "00%",ar.width+20, ILI9488_LCD_HEIGHT - ar.height - termometro.height , 1);
+	
+	font_draw_text(&digital52, "Temp: ",0, ILI9488_LCD_HEIGHT - ar.height - termometro.height - ar.height , 1);
 
 
 
 }
-void draw_temp(int32_t temp) {
+void draw_temp(uint32_t temp) {
 	char temp_buffer [512];
-	sprintf(temp_buffer, "%d",temp);
+	sprintf(temp_buffer, "%2dC",temp);
 	font_draw_text(&digital52, temp_buffer, termometro.width+20, ILI9488_LCD_HEIGHT - termometro.height , 1);
 
 }
 
-void draw_duty(int32_t duty) {
+void draw_duty(uint32_t duty) {
 	char duty_buffer [512];
-	sprintf(duty_buffer, "%02d %",duty);
+	sprintf(duty_buffer, "%2d%",duty);
 	font_draw_text(&digital52, duty_buffer,ar.width+20, ILI9488_LCD_HEIGHT - ar.height - termometro.height , 1);
+
+}
+
+void draw_desired_temp(uint32_t temp) {
+	char temp_buffer [512];
+	sprintf(temp_buffer, "%2dC", temp);
+	font_draw_text(&digital52, temp_buffer, ar.width+50, ILI9488_LCD_HEIGHT - ar.height - termometro.height - ar.height , 1);
 
 }
  
@@ -598,27 +608,36 @@ void task_lcd(void){
   
 	font_draw_text(&digital52, "HH:MM", 0, 0, 1);
 
-  touchData touch;
-	int32_t temp;
-	int32_t duty;
-
+	touchData touch;
+	int32_t temp = 25;
+	int32_t duty = 25;
+	int32_t pot = 0;
   while (true) {  
-     if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
+     if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
        //update_screen(touch.x, touch.y);
        printf("x:%d y:%d\n", touch.x, touch.y);
      }    
-	 if (xQueueReceive( xQueueTemp, &(temp), ( TickType_t )  4500 / portTICK_PERIOD_MS)) {
+	 if (xQueueReceive( xQueueTemp, &(temp), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
 		//update_screen(touch.x, touch.y);
 		draw_temp(temp);
 		printf("\ntemp recebida: %d", temp);
+		draw_duty(pot);
 	 }
 	 
-	if (xQueueReceive( xQueueDuty, &(duty), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
-		draw_duty(duty);
+	if (xQueueReceive( xQueueDuty, &(duty), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
+		draw_desired_temp(duty);
+
+
+		pot = (duty < temp) ? (((temp - duty)*100)/(100-duty)) : 0;
+		
+		xQueueSend( xQueuePot, &pot, 0);
+		draw_duty(pot);
+
+
 		printf("\nDuty recebido: %d", duty);
 
 	}
-
+	//vTaskDelay(100/portTICK_PERIOD_MS);
   }	 
 }
 
@@ -642,22 +661,22 @@ void task_adc(void){
 			//afec_start_software_conversion(AFEC0);
 			//xQueueSend( xQueueTemp, &tempVal, 0);
 		//}
-		if (xQueueReceive( xQueueAnalog, &(adcVal), ( TickType_t )  4500 / portTICK_PERIOD_MS)) {
+		if (xQueueReceive( xQueueAnalog, &(adcVal), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
 			tempVal = convert_adc_to_temp(adcVal);
 			printf("Temp : %d \r\n", tempVal);
 			afec_start_software_conversion(AFEC0);
 			xQueueSend( xQueueTemp, &tempVal, 0);
 		}
 
-		vTaskDelay(4000/portTICK_PERIOD_MS);
+		//vTaskDelay(4000/portTICK_PERIOD_MS);
 
 	}
 }
 void task_pwm(void){
 	xQueueDuty = xQueueCreate( 10, sizeof( int32_t ) );
+	xQueuePot = xQueueCreate( 10, sizeof( int32_t ) );
 
 		
-	int32_t temp;
 	  /* Configura pino para ser controlado pelo PWM */
 	  pmc_enable_periph_clk(ID_PIO_PWM_0);
 	  pio_set_peripheral(PIO_PWM_0, PIO_PERIPH_A, MASK_PIN_PWM_0 );
@@ -665,22 +684,16 @@ void task_pwm(void){
 	  /* inicializa PWM com dutycicle 0*/
 	  PWM0_init(0, duty);
 
-	int32_t dutyVal;
+	int32_t pot;
 	while (true) {
-		/* fade in */
-		if (xQueueReceive( xQueueDuty, &(dutyVal), ( TickType_t )  4500 / portTICK_PERIOD_MS)) {
-			printf("\nduty: %d",dutyVal);
-			for(duty = 0; duty <= dutyVal; duty++){
-				pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
-				delay_ms(10);
+			if (xQueueReceive( xQueuePot, &(pot), ( TickType_t ) 10 / portTICK_PERIOD_MS)) {
+				//int32_t pot = (dutyVal - temp  > 0) ? ((temp - dutyVal)/100) : 0;
+				pwm_channel_update_duty(PWM0, &g_pwm_channel_led,(pot));
+				printf("dutyval: %d", pot);
+				vTaskDelay(1000/portTICK_PERIOD_MS);
 			}
-			/* fade out*/
-			for(duty = 0; duty <= dutyVal; duty++){
-				pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
-				delay_ms(10);
-			}
-		}
-		vTaskDelay(1000/portTICK_PERIOD_MS);
+		
+
 		}
 }
 void butCallback2(void) {
@@ -741,14 +754,14 @@ void io_init(void) {
 	// Configura NVIC para receber interrupcoes do PIO do botao
 	// com prioridade 4 (quanto mais pr?ximo de 0 maior)
 	NVIC_EnableIRQ(BUT2_PIO_ID);
-	NVIC_SetPriority(BUT2_PIO_ID, 4); // Prioridade 
+	NVIC_SetPriority(BUT2_PIO_ID, 5); // Prioridade 
 	
 	pio_enable_interrupt(BUT3_PIO, BUT3_PIN_MASK);
 
 	// Configura NVIC para receber interrupcoes do PIO do botao
 	// com prioridade 4 (quanto mais pr?ximo de 0 maior)
 	NVIC_EnableIRQ(BUT3_PIO_ID);
-	NVIC_SetPriority(BUT3_PIO_ID, 4); // Prioridade 4
+	NVIC_SetPriority(BUT3_PIO_ID, 5); // Prioridade 4
 }
 /**
  * \brief This task, when activated, make LED blink at a fixed rate
@@ -761,7 +774,7 @@ static void task_buts(void *pvParameters)
 	xSemaphore2 = xSemaphoreCreateBinary();
 	xSemaphore3 = xSemaphoreCreateBinary();
 
-	uint32_t duty = 0;
+	int32_t duty = 0;
         /* devemos iniciar a interrupcao no pino somente apos termos alocado
            os recursos (no caso semaforo), nessa funcao inicializamos 
            o botao e seu callback*/
@@ -774,12 +787,18 @@ static void task_buts(void *pvParameters)
 
 	for (;;) {
 		if( xSemaphoreTake(xSemaphore2, ( TickType_t ) 500) == pdTRUE ){
-			duty++;
+			if (duty <100){
+				duty++;
+			}
+			
 			xQueueSend( xQueueDuty, &duty, 0);
 			printf("\nincrementando duty: %d",duty);
 		}
 		if( xSemaphoreTake(xSemaphore3, ( TickType_t ) 500) == pdTRUE ){
-			duty--;
+			if (duty> 0){
+				duty--;
+
+			}
 			xQueueSend( xQueueDuty, &duty, 0);
 			printf("\ndecrementando duty: %d",duty);
 		}
