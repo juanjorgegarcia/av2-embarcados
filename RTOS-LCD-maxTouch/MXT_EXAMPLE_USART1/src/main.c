@@ -361,7 +361,7 @@ void draw_screen(void) {
 	ili9488_draw_pixmap(0, ILI9488_LCD_HEIGHT - termometro.height, termometro.width , termometro.height, termometro.data);
 	font_draw_text(&digital52, "00%",ar.width+20, ILI9488_LCD_HEIGHT - ar.height - termometro.height , 1);
 	
-	font_draw_text(&digital52, "Temp: ",0, ILI9488_LCD_HEIGHT - ar.height - termometro.height - ar.height , 1);
+	font_draw_text(&digital52, "Alvo: ",0, ILI9488_LCD_HEIGHT - ar.height - termometro.height - ar.height , 1);
 
 
 
