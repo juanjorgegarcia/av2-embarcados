@@ -370,7 +370,20 @@ void draw_temp(uint32_t temp) {
 	char temp_buffer [512];
 	sprintf(temp_buffer, "%2dC",temp);
 	font_draw_text(&digital52, temp_buffer, termometro.width+20, ILI9488_LCD_HEIGHT - termometro.height , 1);
+	int32_t size = (34*temp)/100;
+	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
+	ili9488_draw_filled_rectangle(14, ILI9488_LCD_HEIGHT - termometro.height+44 - size, 19, ILI9488_LCD_HEIGHT - termometro.height -size - (34 - size) +42);
+	if(temp>30){
+		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_TOMATO));
+	}else if (temp >15 && temp < 30){
+		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_YELLOW));
 
+	}else{
+		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLUE));
+	}
+	
+	ili9488_draw_filled_rectangle(14, ILI9488_LCD_HEIGHT - termometro.height+44, 19,ILI9488_LCD_HEIGHT - termometro.height - size +42 );
+	
 }
 
 void draw_duty(uint32_t duty) {
@@ -606,7 +619,7 @@ void task_lcd(void){
   
   draw_screen();
   
-	font_draw_text(&digital52, "HH:MM", 0, 0, 1);
+	//font_draw_text(&digital52, "HH:MM", 0, 0, 1);
 
 	touchData touch;
 	int32_t temp = 25;
