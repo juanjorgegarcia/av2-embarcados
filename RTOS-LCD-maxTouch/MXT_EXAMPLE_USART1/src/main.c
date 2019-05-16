@@ -110,7 +110,7 @@ const uint32_t BUTTON_Y = ILI9488_LCD_HEIGHT/2;
 #define TASK_MXT_STACK_SIZE            (2*1024/sizeof(portSTACK_TYPE))
 #define TASK_MXT_STACK_PRIORITY        (tskIDLE_PRIORITY)  
 
-#define TASK_LCD_STACK_SIZE            (2*1024/sizeof(portSTACK_TYPE))
+#define TASK_LCD_STACK_SIZE            (4*1024/sizeof(portSTACK_TYPE))
 #define TASK_LCD_STACK_PRIORITY        (tskIDLE_PRIORITY)
 
 typedef struct {
@@ -118,10 +118,16 @@ typedef struct {
   uint y;
 } touchData;
 
-
+typedef struct {
+	uint8_t second;
+	uint8_t minute;
+	uint8_t hour;
+} clock;
 /** Semaforo a ser usado pela task led */
 SemaphoreHandle_t xSemaphore2;
 SemaphoreHandle_t xSemaphore3;
+SemaphoreHandle_t xSemaphoreRTC;
+
 
 
 ///** The conversion data value */
@@ -134,6 +140,8 @@ QueueHandle_t xQueueTemp;
 QueueHandle_t xQueueAnalog;
 QueueHandle_t xQueueDesiredTemp;
 QueueHandle_t xQueuePot;
+QueueHandle_t xQueueClock;
+
 
 
 
@@ -171,6 +179,15 @@ volatile uint16_t duty = 0;
 #define BUT3_PIN					19u
 #define BUT3_PIN_MASK			  (1 << BUT3_PIN)
 #define BUT3_DEBOUNCING_VALUE  79
+
+
+#define YEAR 0
+#define MOUNTH 0
+#define DAY 0
+#define WEEK 0
+#define HOUR 0
+#define MINUTE 0
+#define SECOND 0
 
 
 /**
@@ -393,6 +410,13 @@ void draw_duty(uint32_t duty) {
 
 }
 
+void draw_clock(uint8_t second, uint8_t minute, uint8_t hour) {
+
+	char clock_buffer [512];
+	sprintf(clock_buffer,"%02d:%02d:%02d", hour, minute,second);
+	font_draw_text(&digital52, clock_buffer, 2, 2, 1);
+
+}
 void draw_desired_temp(uint32_t temp) {
 	char temp_buffer [512];
 	sprintf(temp_buffer, "%2dC", temp);
@@ -519,7 +543,7 @@ static void AFEC_Temp_callback(void)
 	//
 	//g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
 	//g_is_conversion_done = true;
-	printf("converteu");
+	//printf("converteu");
 }
 
 /**
@@ -589,6 +613,59 @@ static void config_ADC_TEMP(void){
 	afec_channel_enable(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
 }
 
+void RTC_init() {
+	/* Configura o PMC */
+	pmc_enable_periph_clk(ID_RTC);
+
+	/* Default RTC configuration, 24-hour mode */
+	rtc_set_hour_mode(RTC, 0);
+
+	/* Configura data e hora manualmente */
+	rtc_set_date(RTC, YEAR, MOUNTH, DAY, WEEK);
+	rtc_set_time(RTC, HOUR, MINUTE, SECOND);
+
+	/* Configure RTC interrupts */
+	NVIC_DisableIRQ(RTC_IRQn);
+	NVIC_ClearPendingIRQ(RTC_IRQn);
+	NVIC_SetPriority(RTC_IRQn, 5);
+	NVIC_EnableIRQ(RTC_IRQn);
+
+	/* Ativa interrupcao via alarme */
+//	rtc_enable_interrupt(RTC, RTC_IER_ALREN);
+	rtc_enable_interrupt(RTC, RTC_IER_SECEN);
+}
+void RTC_Handler(void) {
+	uint32_t ul_status = rtc_get_status(RTC);
+	uint16_t hour;
+	uint16_t m;
+	uint16_t se;
+	clock c;
+	
+	//INTERRUP??O POR SEGUNDO
+	if ((ul_status & RTC_SR_SEC) == RTC_SR_SEC) {
+		rtc_clear_status(RTC, RTC_SCCR_SECCLR);
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		
+		xSemaphoreGiveFromISR(xSemaphoreRTC, NULL);
+		
+
+	}
+
+	//INTERRUP??O POR ALARME
+	if ((ul_status & RTC_SR_ALARM) == RTC_SR_ALARM) {
+		//Terminou a lavagem mudando valor da variavel para o mesmo
+		//if (isWashing == 1) {
+			//isWashing = 2;
+		//}
+
+		rtc_clear_status(RTC, RTC_SCCR_ALRCLR);
+	}
+
+	rtc_clear_status(RTC, RTC_SCCR_ACKCLR);
+	rtc_clear_status(RTC, RTC_SCCR_TIMCLR);
+	rtc_clear_status(RTC, RTC_SCCR_CALCLR);
+	rtc_clear_status(RTC, RTC_SCCR_TDERRCLR);
+}
 /************************************************************************/
 /* tasks                                                                */
 /************************************************************************/
@@ -618,6 +695,10 @@ void task_lcd(void){
 	configure_lcd();
   
   draw_screen();
+  	 xSemaphoreRTC = xSemaphoreCreateBinary();
+
+  	 RTC_init();
+
   
 	//font_draw_text(&digital52, "HH:MM", 0, 0, 1);
 
@@ -625,32 +706,33 @@ void task_lcd(void){
 	int32_t temp = 25;
 	int32_t desiredTemp = 25;
 	int32_t pot = 0;
+	uint8_t second;
+	uint8_t minute;
+	uint8_t hour;
   while (true) {  
-     if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
-       //update_screen(touch.x, touch.y);
-       printf("x:%d y:%d\n", touch.x, touch.y);
-     }    
+     //if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
+       ////update_screen(touch.x, touch.y);
+       ////printf("x:%d y:%d\n", touch.x, touch.y);
+     //}    
 	 if (xQueueReceive( xQueueTemp, &(temp), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
 		//update_screen(touch.x, touch.y);
 		draw_temp(temp);
-		printf("\ntemp recebida: %d", temp);
+		//printf("\ntemp recebida: %d", temp);
 		pot = (desiredTemp < temp) ? (((temp - desiredTemp)*100)/(100-desiredTemp)) : 0;
-
 		draw_duty(pot);
 	 }
 	 
 	if (xQueueReceive( xQueueDesiredTemp, &(desiredTemp), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
 		draw_desired_temp(desiredTemp);
-
-
-		pot = (desiredTemp < temp) ? (((temp - desiredTemp)*100)/(100-desiredTemp)) : 0;
-		
+		pot = (desiredTemp < temp) ? (((temp - desiredTemp)*100)/(100-desiredTemp)) : 0;		
 		xQueueSend( xQueuePot, &pot, 0);
 		draw_duty(pot);
+		//printf("\nDuty recebido: %d", desiredTemp);
 
-
-		printf("\nDuty recebido: %d", desiredTemp);
-
+	}
+	if(xSemaphoreTake(xSemaphoreRTC,( TickType_t )  10 / portTICK_PERIOD_MS)){
+		rtc_get_time(RTC,&hour,&minute,&second);
+		draw_clock(second,minute,hour);
 	}
 	//vTaskDelay(100/portTICK_PERIOD_MS);
   }	 
@@ -678,7 +760,7 @@ void task_adc(void){
 		//}
 		if (xQueueReceive( xQueueAnalog, &(adcVal), ( TickType_t )  10 / portTICK_PERIOD_MS)) {
 			tempVal = convert_adc_to_temp(adcVal);
-			printf("Temp : %d \r\n", tempVal);
+			//printf("Temp : %d \r\n", tempVal);
 			afec_start_software_conversion(AFEC0);
 			xQueueSend( xQueueTemp, &tempVal, 0);
 		}
@@ -702,21 +784,20 @@ void task_pwm(void){
 	while (true) {
 			if (xQueueReceive( xQueuePot, &(pot), ( TickType_t ) 10 / portTICK_PERIOD_MS)) {
 				//int32_t pot = (dutyVal - temp  > 0) ? ((temp - dutyVal)/100) : 0;
-				pwm_channel_update_duty(PWM0, &g_pwm_channel_led,(pot));
+				pwm_channel_update_duty(PWM0, &g_pwm_channel_led,100 -(pot));
 				printf("dutyval: %d", pot);
-				vTaskDelay(1000/portTICK_PERIOD_MS);
 			}
-		
+			vTaskDelay(100/portTICK_PERIOD_MS);
 
 		}
 }
 void butCallback2(void) {
 
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	printf("but_callback \n");
+	//printf("but_callback \n");
 	xSemaphoreGiveFromISR(xSemaphore2, &xHigherPriorityTaskWoken);
 	
-	printf("semafaro tx \n");
+	//printf("semafaro tx \n");
 
   /*
   else{
@@ -728,9 +809,9 @@ void butCallback2(void) {
 void butCallback3(void) {
 	
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	printf("but_callback \n");
+	//printf("but_callback \n");
 	xSemaphoreGiveFromISR(xSemaphore3, &xHigherPriorityTaskWoken);
-	printf("semafaro tx \n");
+	//printf("semafaro tx \n");
   /*
   else{
     BaseType_t xHigherPriorityTaskWoken = pdTRUE;
@@ -863,7 +944,7 @@ int main(void)
 	if (xTaskCreate(task_buts, "buttons", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
 			printf("Failed to create test adc task\r\n");
 	}
-	
+
 
   /* Start the scheduler. */
   vTaskStartScheduler();
